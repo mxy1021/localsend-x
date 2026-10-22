@@ -220,8 +220,10 @@ Future<void> postInit(BuildContext context, Ref ref, bool appStart) async {
     }
   }
 
+  // The boot engine has already started these before an Activity was attached.
+  final bootReceiverStarted = ref.read(appArgumentsProvider).contains('--android-boot');
   try {
-    await ref.notifier(serverProvider).startServerFromSettings();
+    if (!bootReceiverStarted) await ref.notifier(serverProvider).startServerFromSettings();
   } catch (e) {
     if (context.mounted) {
       context.showSnackBar(e.toString());
@@ -229,7 +231,7 @@ Future<void> postInit(BuildContext context, Ref ref, bool appStart) async {
   }
 
   try {
-    ref.redux(nearbyDevicesProvider).dispatchAsync(StartDiscoveryListener()); // ignore: unawaited_futures
+    if (!bootReceiverStarted) ref.redux(nearbyDevicesProvider).dispatchAsync(StartDiscoveryListener()); // ignore: unawaited_futures
   } catch (e) {
     _logger.warning('Starting discovery listener failed', e);
   }

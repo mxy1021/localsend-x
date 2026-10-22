@@ -141,19 +141,27 @@ class ReceiveController {
 
     if (quickSave) {
       // Push before accepting: the permission request in [acceptFileRequest] may block for a while.
-      // ignore: use_build_context_synchronously, unawaited_futures
-      Routerino.context.pushImmediately(
-        () => ProgressPage(
-          showAppBar: false,
-          closeSessionOnClose: true,
-          sessionId: sessionId,
-        ),
-      );
+      if (Routerino.navigatorKey.currentContext != null) {
+        // ignore: use_build_context_synchronously, unawaited_futures
+        Routerino.context.pushImmediately(
+          () => ProgressPage(
+            showAppBar: false,
+            closeSessionOnClose: true,
+            sessionId: sessionId,
+          ),
+        );
+      }
 
       // accept all files
       await acceptFileRequest({
         for (final f in files.values) f.id: f.fileName,
       });
+      return;
+    }
+
+    // A boot receiver has no UI for confirmation until an Activity is attached.
+    if (Routerino.navigatorKey.currentContext == null) {
+      declineFileRequest();
       return;
     }
 
@@ -426,6 +434,7 @@ class ReceiveController {
         Future.delayed(Duration.zero, () {
           closeSession();
           _logger.info('Closing session');
+          if (Routerino.navigatorKey.currentContext == null) return;
 
           // ignore: use_build_context_synchronously, discarded_futures
           Routerino.context.pushRootImmediately(() => const HomePage(initialTab: HomeTab.receive, appStart: false));
@@ -705,7 +714,7 @@ void _cancelBySender(ServerUtils server) {
 
   TransferNotification.stop(receiveSession.sessionId);
 
-  if (receiveSession.status == SessionStatus.waiting) {
+  if (receiveSession.status == SessionStatus.waiting && Routerino.navigatorKey.currentContext != null) {
     // received cancel during accept/decline
     // pop just in case if user is in [ReceiveOptionsPage]
     Routerino.context.popUntil(ReceivePage);

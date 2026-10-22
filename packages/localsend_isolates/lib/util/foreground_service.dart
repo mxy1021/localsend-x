@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:localsend_isolates/util/future_queue.dart';
@@ -34,6 +36,13 @@ class ForegroundService {
   /// Whether the service is currently keeping the process alive.
   static bool get isRunning => _running;
 
+  /// Boot must retain its temporary foreground service until the receiver service is ready.
+  static Future<bool> waitUntilReady() {
+    final ready = Completer<bool>();
+    _queue.add(() async => ready.complete(_running));
+    return ready.future;
+  }
+
   /// Whether [updateNotification] would actually forward an update right now.
   /// Lets callers skip building a text that gets throttled away anyway.
   static bool get shouldUpdateNotification {
@@ -44,7 +53,7 @@ class ForegroundService {
     return lastUpdate == null || DateTime.now().difference(lastUpdate) >= _updateInterval;
   }
 
-  /// Starts the service and shows the notification. Does nothing if it is already running.
+  /// Starts the service, or refreshes its notification if it is already running.
   ///
   /// [channelName] is shown in the Android notification settings and is only read the first time
   /// the service starts, because the notification channel is created once per app installation.
@@ -61,16 +70,22 @@ class ForegroundService {
     _lastTitle = null;
     _lastText = null;
     _queue.add(() async {
-      if (_running) {
+      if (_running && await FlutterForegroundTask.isRunningService) {
+        final result = await FlutterForegroundTask.updateService(notificationTitle: title, notificationText: text);
+        if (result is ServiceRequestFailure) {
+          _logger.warning('Could not update the foreground service', result.error);
+        }
         return;
       }
+
+      _running = false;
 
       await _requestNotificationPermission();
       _init(channelName: channelName);
 
       final result = await FlutterForegroundTask.startService(
         serviceId: _serviceId,
-        serviceTypes: const [ForegroundServiceTypes.dataSync],
+        serviceTypes: const [ForegroundServiceTypes.connectedDevice],
         notificationTitle: title,
         notificationText: text,
       );
@@ -91,14 +106,14 @@ class ForegroundService {
   ///
   /// The [title] can change while the service runs, because what the service is keeping alive
   /// may change without it ever stopping.
-  static void updateNotification({required String title, required String text}) {
+  static void updateNotification({required String title, required String text, bool force = false}) {
     if (!_isSupported) {
       return;
     }
 
     final now = DateTime.now();
     final lastUpdate = _lastUpdate;
-    if (lastUpdate != null && now.difference(lastUpdate) < _updateInterval) {
+    if (!force && lastUpdate != null && now.difference(lastUpdate) < _updateInterval) {
       return;
     }
     _lastUpdate = now;
@@ -166,6 +181,10 @@ class ForegroundService {
         eventAction: ForegroundTaskEventAction.nothing(),
         autoRunOnBoot: false,
         autoRunOnMyPackageReplaced: false,
+        // Restarting only this notification service cannot recreate the app's networking isolates.
+        allowAutoRestart: false,
+        // Use android:stopWithTask in the manifest. In plugin 9.2.2 the Dart option
+        // also stops on Activity.onPause, including Home and screen lock.
         allowWakeLock: true,
         allowWifiLock: true,
       ),

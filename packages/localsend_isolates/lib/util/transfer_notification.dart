@@ -11,13 +11,35 @@ const _minBytesForSpeed = 500 * 1024;
 ///
 /// There is one notification but there can be several transfers: receiving is limited to one
 /// session, sending is not, and both directions can run at the same time. So the service is
-/// reference counted here - it starts with the first transfer, ends with the last one, and the
-/// notification shows the sum of everything in flight.
+/// reference counted here. With background receiving enabled, it stays alive between transfers;
+/// otherwise it ends with the last transfer. The notification sums everything in flight.
 class TransferNotification {
   TransferNotification._();
 
   static final _transfers = <String, _Transfer>{};
   static NotificationStrings? _strings;
+  static ({String title, String text})? _backgroundReceiving;
+
+  /// Keeps discovery and the receiver alive between transfers. Call while the app is visible.
+  /// This does not change which senders the receive controller authorizes.
+  static void setBackgroundReceiving({required bool enabled, required String title, required String text}) {
+    _backgroundReceiving = enabled ? (title: title, text: text) : null;
+    if (_transfers.isEmpty) {
+      _showBackgroundOrStop();
+    } else if (enabled) {
+      // Also retries a previous service start failure when the user returns to the app.
+      ForegroundService.start(channelName: _requiredStrings.titleReceiving, title: _title(), text: _text());
+    }
+  }
+
+  static void _showBackgroundOrStop() {
+    final background = _backgroundReceiving;
+    if (background == null) {
+      ForegroundService.stop();
+    } else {
+      ForegroundService.start(channelName: _requiredStrings.titleReceiving, title: background.title, text: background.text);
+    }
+  }
 
   /// Injects the translated strings. Must be called before the first transfer starts.
   /// The locale is pinned on app start, so one call is enough.
@@ -75,16 +97,16 @@ class TransferNotification {
     ForegroundService.updateNotification(title: _title(), text: _text());
   }
 
-  /// Unregisters a transfer, stopping the service once the last one is gone.
+  /// Unregisters a transfer, returning to idle receiving or stopping after the last one.
   static void stop(String sessionId) {
     if (_transfers.remove(sessionId) == null) {
       return;
     }
 
     if (_transfers.isEmpty) {
-      ForegroundService.stop();
+      _showBackgroundOrStop();
     } else {
-      ForegroundService.updateNotification(title: _title(), text: _text());
+      ForegroundService.updateNotification(title: _title(), text: _text(), force: true);
     }
   }
 
